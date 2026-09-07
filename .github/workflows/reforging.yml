@@ -1,109 +1,311 @@
-name: Start Reforge
+name: Runner Hardware Diagnostic
 
 on:
   workflow_dispatch:
 
 jobs:
-  Reforging:
+  diagnose:
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type:
-          - KSU
-          - KSU-OEM
-          - Non-KSU
-
     steps:
-    - name: 🔄 Checkout Code
-      uses: actions/checkout@v5
 
-    - name: ⏰ Prepare timezone
-      run: |
-        sudo rm /etc/localtime
-        sudo ln -s /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+      # ============================================================
+      # 1. SYSTEM INFORMATION
+      # ============================================================
+      - name: System Information
+        run: |
+          set -e
 
-    - name: 📦 Install Dependencies
-      run: |
-        sudo apt update -y
-        sudo apt install bc cpio flex bison aptitude git python-is-python3 tar aria2 perl wget curl lz4 libssl-dev -y
+          echo "============================================================"
+          echo "SYSTEM INFORMATION"
+          echo "============================================================"
 
-    - name: 🔧 Clone Toolchains
-      run: |
-        mkdir clang && cd clang && curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman" && chmod a+x antman && ./antman -S && ./antman --patch=glibc && cd ..
-        git clone https://github.com/greenforce-project/gcc-arm64 -b main --depth=1 gcc64
-        git clone https://github.com/greenforce-project/gcc-arm -b main --depth=1 gcc32
+          echo
+          echo "OS:"
+          cat /etc/os-release
 
-    - name: ⚙️ Setup Environment
-      run: |
-        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> $GITHUB_ENV
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> $GITHUB_ENV
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> $GITHUB_ENV
+          echo
+          echo "Kernel:"
+          uname -a
 
-    - name: 📅 Set BUILD DATE
-      run: |
-        echo "BUILD_DATE='\"$(TZ=Asia/Jakarta date '+%b %d %Y')\"'" >> $GITHUB_ENV
+          echo
+          echo "Architecture:"
+          uname -m
 
-    - name: 🥷 Implant NoMount
-      run: curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
+          echo
+          echo "Hostname:"
+          hostname
 
-    - name: 📥 Setup KernelSU-Next
-      if: ${{ matrix.build_type == 'KSU' || matrix.build_type == 'KSU-OEM' }}
-      run: |
-        curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" | bash -s syscall
+      # ============================================================
+      # 2. CPU INFORMATION
+      # ============================================================
+      - name: CPU Information
+        run: |
+          set -e
 
-    - name: 📐 OEM Dimension
-      if: ${{ matrix.build_type == 'KSU-OEM' }}
-      run: |
-        sed -i 's/qcom,mdss-pan-physical-width-dimension = <69>;$/qcom,mdss-pan-physical-width-dimension = <695>;/' arch/arm64/boot/dts/qcom/xiaomi/sweet/dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi
-        sed -i 's/qcom,mdss-pan-physical-height-dimension = <154>;$/qcom,mdss-pan-physical-height-dimension = <1546>;/' arch/arm64/boot/dts/qcom/xiaomi/sweet/dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi
+          echo "============================================================"
+          echo "CPU INFORMATION"
+          echo "============================================================"
 
-    - name: 🛠️ Build Kernel
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-        export KBUILD_BUILD_USER=Manipulator
-        export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
-        export BUILD_DATE=$BUILD_DATE
-        export CFLAGS_EXTRA="-DBUILD_DATE=$BUILD_DATE"
-        make O=out ARCH=arm64 vendor/sweet_defconfig
-        make -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
-          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
-          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi-
-        mv out/.config out/sweet_defconfig.txt
+          echo
+          echo "CPU model:"
+          lscpu | grep -E \
+            "Model name|Architecture|CPUs|Thread|Core|Socket|MHz|Vendor ID"
 
-    - name: 💾 Upload Config
-      uses: actions/upload-artifact@v5
-      with:
-        name: configs-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/sweet_defconfig.txt
+          echo
+          echo "Online CPUs:"
+          nproc
 
-    - name: 📂 Clone AnyKernel3 & Prepare ZIP
-      run: |
-        git clone --depth=1 \
-          https://github.com/manipvlator/Anykernel3.git \
-          -b reforge \
-          AnyKernel3
+          echo
+          echo "CPU details:"
+          lscpu
 
-        cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
-        cp out/arch/arm64/boot/dtbo.img AnyKernel3/dtbo.img
-        cp out/arch/arm64/boot/dtb.img AnyKernel3/dtb.img
-        cd AnyKernel3
-        zip -r \
-          "../Reforge_${{ matrix.build_type }}-${{ github.ref_name }}-${BUILD_TIME}.zip" \
-          *
+      # ============================================================
+      # 3. RAM INFORMATION
+      # ============================================================
+      - name: RAM Information
+        run: |
+          set -e
 
-    - name: 📤 Upload Flashable ZIP
-      uses: actions/upload-artifact@v5
-      with:
-        name: Reforge_${{ matrix.build_type }}-${{ github.ref_name }}-${{ env.BUILD_TIME }}
-        path: AnyKernel3/*
+          echo "============================================================"
+          echo "RAM INFORMATION"
+          echo "============================================================"
+
+          echo
+          echo "free -h:"
+          free -h
+
+          echo
+          echo "Detailed memory:"
+          cat /proc/meminfo
+
+      # ============================================================
+      # 4. SWAP INFORMATION
+      # ============================================================
+      - name: Swap Information
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "SWAP INFORMATION"
+          echo "============================================================"
+
+          echo
+          echo "free -h:"
+          free -h
+
+          echo
+          echo "Active swap:"
+          swapon --show || true
+
+          echo
+          echo "Swap summary:"
+          cat /proc/swaps
+
+      # ============================================================
+      # 5. DISK INFORMATION
+      # ============================================================
+      - name: Disk Information
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "DISK INFORMATION"
+          echo "============================================================"
+
+          echo
+          echo "Filesystem:"
+          df -hT
+
+          echo
+          echo "Workspace:"
+          df -hT "$GITHUB_WORKSPACE"
+
+          echo
+          echo "Workspace size:"
+          du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
+
+          echo
+          echo "/tmp:"
+          df -hT /tmp
+
+          echo
+          echo "Block devices:"
+          lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT
+
+      # ============================================================
+      # 6. CPU LOAD
+      # ============================================================
+      - name: CPU Load
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "CPU LOAD"
+          echo "============================================================"
+
+          echo
+          echo "Uptime:"
+          uptime
+
+          echo
+          echo "Load average:"
+          cat /proc/loadavg
+
+      # ============================================================
+      # 7. MEMORY PRESSURE
+      # ============================================================
+      - name: Memory Pressure
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "MEMORY PRESSURE"
+          echo "============================================================"
+
+          echo
+          echo "PSI memory:"
+          cat /proc/pressure/memory || true
+
+          echo
+          echo "PSI CPU:"
+          cat /proc/pressure/cpu || true
+
+          echo
+          echo "PSI IO:"
+          cat /proc/pressure/io || true
+
+      # ============================================================
+      # 8. TOOLCHAIN AVAILABLE ON RUNNER
+      # ============================================================
+      - name: Existing Toolchains
+        run: |
+          set +e
+
+          echo "============================================================"
+          echo "EXISTING TOOLCHAINS"
+          echo "============================================================"
+
+          echo
+          echo "Clang:"
+          command -v clang
+          clang --version
+
+          echo
+          echo "GCC:"
+          command -v gcc
+          gcc --version
+
+          echo
+          echo "LLD:"
+          command -v ld.lld
+          ld.lld --version
+
+          echo
+          echo "LLVM:"
+          command -v llvm-ar
+          llvm-ar --version | head -n 1
+
+          echo
+          echo "AArch64 GCC:"
+          command -v aarch64-linux-gnu-gcc
+          aarch64-linux-gnu-gcc --version | head -n 1
+
+      # ============================================================
+      # 9. ENVIRONMENT
+      # ============================================================
+      - name: Runner Environment
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "RUNNER ENVIRONMENT"
+          echo "============================================================"
+
+          echo
+          echo "GitHub runner:"
+          echo "${RUNNER_NAME:-unknown}"
+
+          echo
+          echo "Runner OS:"
+          echo "${RUNNER_OS:-unknown}"
+
+          echo
+          echo "Runner architecture:"
+          echo "${RUNNER_ARCH:-unknown}"
+
+          echo
+          echo "Workspace:"
+          echo "$GITHUB_WORKSPACE"
+
+          echo
+          echo "HOME:"
+          echo "$HOME"
+
+          echo
+          echo "TMPDIR:"
+          echo "${TMPDIR:-/tmp}"
+
+      # ============================================================
+      # 10. IMPORTANT LIMITS
+      # ============================================================
+      - name: Important Limits
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "PROCESS / SYSTEM LIMITS"
+          echo "============================================================"
+
+          echo
+          echo "ulimit:"
+          ulimit -a
+
+          echo
+          echo "Max user processes:"
+          ulimit -u
+
+          echo
+          echo "Open files:"
+          ulimit -n
+
+      # ============================================================
+      # 11. FINAL SUMMARY
+      # ============================================================
+      - name: Final Summary
+        run: |
+          set -e
+
+          echo
+          echo "============================================================"
+          echo "FINAL RUNNER SUMMARY"
+          echo "============================================================"
+
+          echo
+          echo "CPU:"
+          echo "$(nproc) logical CPUs"
+
+          echo
+          echo "RAM:"
+          free -h | grep Mem:
+
+          echo
+          echo "Swap:"
+          free -h | grep Swap:
+
+          echo
+          echo "Disk:"
+          df -h "$GITHUB_WORKSPACE" | tail -n 1
+
+          echo
+          echo "Architecture:"
+          uname -m
+
+          echo
+          echo "Kernel:"
+          uname -r
+
+          echo
+          echo "============================================================"
+          echo "DIAGNOSTIC COMPLETE"
+          echo "============================================================"
